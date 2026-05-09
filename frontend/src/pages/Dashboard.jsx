@@ -3,7 +3,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchHealth, fetchIncidents } from "../services/api.js";
+import { Link } from "react-router-dom";
+import { fetchHealth, fetchIncidents, fetchMonitorStatus, postMonitorRunNow } from "../services/api.js";
 
 const REFRESH_MS = 30_000;
 
@@ -26,8 +27,11 @@ function statusStyle(st) {
 export default function Dashboard() {
   const [health, setHealth] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [monitorStatus, setMonitorStatus] = useState(null);
   const [err, setErr] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runSummary, setRunSummary] = useState(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -36,6 +40,11 @@ export default function Dashboard() {
       setHealth(h);
       const rows = Array.isArray(inc) ? inc : inc?.incidents ?? [];
       setIncidents(rows);
+      try {
+        setMonitorStatus(await fetchMonitorStatus());
+      } catch {
+        setMonitorStatus(null);
+      }
       setLastRefresh(new Date().toISOString());
     } catch (e) {
       setErr(String(e.message || e));
@@ -80,9 +89,188 @@ export default function Dashboard() {
         )}
       </section>
 
+      <section style={{ marginTop: "1.5rem", padding: "1rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "8px" }}>
+        <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>Demo: run CPI monitor now</h2>
+        <p style={{ margin: "0.5rem 0 1rem", color: "#166534", fontSize: "0.9rem" }}>
+          Triggers <code>POST /monitor/run-now</code> — same path as the scheduler: FAILED MPL → full agent →
+          <code> incidents</code> SQLite. Backend must stay running; this does not replace uvicorn.
+        </p>
+
+        {monitorStatus && (
+          <div
+            style={{
+              marginBottom: "1rem",
+              padding: "0.75rem 1rem",
+              background: "#fff",
+              border: "1px solid #bbf7d0",
+              borderRadius: "8px",
+              fontSize: "0.88rem",
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "#14532d" }}>Live config (GET /monitor/status)</div>
+            <div style={{ color: "#166534" }}>
+              <strong>MONITOR_IFLOW_IDS</strong> →{" "}
+              {(monitorStatus.monitored_artifact_ids || []).length ? (
+                <code>{(monitorStatus.monitored_artifact_ids || []).join(", ")}</code>
+              ) : (
+                <span style={{ color: "#b45309" }}>none (empty list — run-now cannot poll CPI yet)</span>
+              )}
+            </div>
+            <div style={{ marginTop: "0.35rem", color: "#166534" }}>
+              <strong>CPI_USE_MOCK</strong>: {String(monitorStatus.cpi_use_mock)} · <strong>lookback</strong>:{" "}
+              {monitorStatus.lookback_minutes ?? "—"} min
+            </div>
+            {(monitorStatus.monitored_artifact_ids || []).length === 0 && (
+              <p style={{ margin: "0.5rem 0 0", color: "#92400e", lineHeight: 1.45 }}>
+                Edit <code>backend/.env</code>, set <code>MONITOR_IFLOW_IDS=&lt;IntegrationArtifact.Id&gt;</code> (comma-separated if
+                several), save, then restart uvicorn from the <code>backend</code> folder. If you already set it, a restart was
+                still required — pydantic-settings reads <code>.env</code> at process start only.
+              </p>
+            )}
+            {monitorStatus.cpi_use_mock && (
+              <p style={{ margin: "0.5rem 0 0", color: "#92400e", lineHeight: 1.45 }}>
+                With <code>CPI_USE_MOCK=true</code>, the monitor never calls your tenant; run-now returns{" "}
+                <code>skipped: cpi_use_mock</code> until you use real CPI settings.
+              </p>
+            )}
+          </div>
+        )}
+
+        <button
+          type="button"
+          disabled={runBusy || !!err}
+          onClick={async () => {
+            setRunSummary(null);
+            setRunBusy(true);
+            try {
+              const out = await postMonitorRunNow();
+              setRunSummary(out);
+              await load();
+            } catch (e) {
+              setRunSummary({ ok: false, error: String(e.message || e) });
+            } finally {
+              setRunBusy(false);
+            }
+          }}
+          style={{
+            padding: "0.5rem 1rem",
+            fontWeight: 600,
+            borderRadius: "8px",
+            border: "1px solid #16a34a",
+            background: runBusy ? "#cbd5e1" : "#22c55e",
+            color: "#fff",
+            cursor: runBusy || err ? "not-allowed" : "pointer",
+          }}
+        >
+          {runBusy ? "Running…" : "Run CPI monitor now"}
+        </button>
+        {runSummary && (
+          <div style={{ marginTop: "0.75rem" }}>
+            {runSummary.error ? (
+              <p style={{ color: "#b91c1c", fontSize: "0.9rem" }}>{runSummary.error}</p>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.9rem", margin: "0 0 0.5rem" }}>{runSummary.message || "OK"}</p>
+                {runSummary.skipped && (
+                  <p
+                    style={{
+                      margin: "0.5rem 0 0",
+                      padding: "0.5rem 0.75rem",
+                      background: "#fffbeb",
+                      border: "1px solid #fcd34d",
+                      borderRadius: "6px",
+                      fontSize: "0.88rem",
+                      color: "#92400e",
+                    }}
+                  >
+                    <strong style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{runSummary.skipped}</strong>
+                    <br />
+                    {runSummary.hint || "See README and backend/.env.example."}
+                  </p>
+                )}
+                {Array.isArray(runSummary.outcomes) && runSummary.outcomes.length > 0 && (
+                  <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem", fontSize: "0.86rem", color: "#14532d" }}>
+                    {runSummary.outcomes.map((o, idx) => (
+                      <li key={`${o.artifact_id}-${idx}-${o.result}`}>
+                        <code>{o.artifact_id}</code> → {o.result}
+                        {o.detail ? (
+                          <span style={{ color: "#64748b" }}>
+                            {" "}
+                            ({String(o.detail).length > 120 ? `${String(o.detail).slice(0, 120)}…` : o.detail})
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {"incidents_stored" in runSummary && (
+                  <p
+                    style={{
+                      margin: "0.5rem 0 0",
+                      fontSize: "0.88rem",
+                      color: runSummary.skipped ? "#64748b" : "#166534",
+                    }}
+                  >
+                    Incidents inserted this cycle: <strong>{runSummary.incidents_stored}</strong>
+                    {runSummary.skipped
+                      ? " — expected when the cycle did not run investigations (see reason above)."
+                      : runSummary.incidents_stored === 0 &&
+                          (runSummary.outcomes || []).some((o) => o.result && String(o.result).startsWith("skipped_"))
+                        ? " — MPL had no new failures to analyze, or duplicate message_id, for each artifact."
+                        : null}
+                  </p>
+                )}
+                <details style={{ marginTop: "0.75rem" }}>
+                  <summary style={{ cursor: "pointer", fontSize: "0.85rem" }}>Full API response</summary>
+                  <pre
+                    style={{
+                      marginTop: "0.5rem",
+                      background: "#fff",
+                      border: "1px solid #e2e8f0",
+                      padding: "0.75rem",
+                      borderRadius: "8px",
+                      fontSize: "0.78rem",
+                      overflow: "auto",
+                    }}
+                  >
+                    {JSON.stringify(runSummary, null, 2)}
+                  </pre>
+                </details>
+              </>
+            )}
+          </div>
+        )}
+        {monitorStatus && (
+          <details style={{ marginTop: "1rem" }}>
+            <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "#475569" }}>
+              Raw GET /monitor/status JSON
+            </summary>
+            <pre
+              style={{
+                marginTop: "0.5rem",
+                background: "#fff",
+                border: "1px solid #e2e8f0",
+                padding: "0.75rem",
+                borderRadius: "8px",
+                fontSize: "0.78rem",
+                overflow: "auto",
+              }}
+            >
+              {JSON.stringify(monitorStatus, null, 2)}
+            </pre>
+          </details>
+        )}
+      </section>
+
       <section style={{ marginTop: "2rem" }}>
         <h2 style={{ fontSize: "1.1rem" }}>Latest incidents</h2>
-        {!err && incidents.length === 0 && <p style={{ color: "#64748b" }}>No stored incidents yet (run the CPI monitor or POST /monitor/run-now).</p>}
+        {!err && incidents.length === 0 && (
+          <p style={{ color: "#64748b" }}>
+            No stored incidents yet — configure <code>MONITOR_IFLOW_IDS</code> and real CPI (see demo box above), then run the
+            monitor. For DB + LLM audit drill-down after rows exist, open{" "}
+            <Link to="/monitor/lifecycle">Monitor lifecycle</Link>.
+          </p>
+        )}
         {incidents.length > 0 && (
           <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>

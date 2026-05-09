@@ -39,12 +39,16 @@ app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # Dev: any localhost / 127.0.0.1 port (alternate Vite ports, file previews, etc.).
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(api_router)
+# Also serve the same API under ``/api/*`` so clients or proxies that prefix paths (e.g. ``/api/incidents``) work.
+app.include_router(api_router, prefix="/api")
 
 
 @app.get("/")

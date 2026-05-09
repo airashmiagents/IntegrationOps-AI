@@ -30,26 +30,67 @@ def monitored_artifact_ids() -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def get_scheduler_runtime_status() -> dict[str, Any]:
+    """
+    Whether APScheduler actually started in this process and when the next CPI poll is due.
+
+    ``start_monitor_scheduler`` is skipped when ``SCHEDULER_ENABLED`` is false or ``CPI_USE_MOCK`` is true,
+    so ``scheduler_process_running`` can be false even if ``scheduler_enabled`` is true in ``.env``.
+    """
+    global _scheduler
+    if _scheduler is None or not _scheduler.running:
+        return {
+            "scheduler_process_running": False,
+            "next_cpi_poll_at": None,
+            "poll_interval_sec_active": None,
+        }
+    job = _scheduler.get_job("cpi_failed_log_monitor")
+    nrt = job.next_run_time if job else None
+    nrt_out: str | None = None
+    if nrt is not None:
+        nrt_out = nrt.isoformat() if nrt.tzinfo else nrt.replace(tzinfo=timezone.utc).isoformat()
+    return {
+        "scheduler_process_running": True,
+        "next_cpi_poll_at": nrt_out,
+        "poll_interval_sec_active": max(60, int(settings.scheduler_interval_sec)),
+    }
+
+
 def get_monitor_history() -> list[dict[str, Any]]:
     """Last N scheduler / manual runs (newest first)."""
     return list(reversed(_history[-_MAX_HISTORY :]))
 
 
-def run_monitor_cycle(*, force: bool = False) -> None:
+def run_monitor_cycle(*, force: bool = False) -> dict[str, Any]:
     """
     One poll: for each configured artifact Id, pull recent FAILED MPL rows, skip duplicates
     (``message_id`` already in ``incidents`` SQLite), then run the full investigation agent.
+
+    Returns a JSON-serializable summary for ``POST /monitor/run-now`` and demos.
     """
     if not force and not settings.scheduler_enabled:
-        return
+        return {"skipped": "scheduler_disabled", "polled_artifact_ids": [], "outcomes": [], "incidents_stored": 0}
+
     if settings.cpi_use_mock:
         logger.debug("Monitor cycle skipped: CPI_USE_MOCK=true")
-        return
+        return {
+            "skipped": "cpi_use_mock",
+            "hint": "Set CPI_USE_MOCK=false in backend/.env with real SAP_CPI_BASE_URL / user / password, then restart uvicorn (from the backend folder so .env loads).",
+            "polled_artifact_ids": [],
+            "outcomes": [],
+            "incidents_stored": 0,
+        }
 
     ids = monitored_artifact_ids()
     if not ids:
         logger.warning("Monitor enabled but MONITOR_IFLOW_IDS is empty — nothing to poll")
-        return
+        return {
+            "skipped": "empty_monitor_iflow_ids",
+            "hint": "Set MONITOR_IFLOW_IDS in backend/.env to comma-separated CPI IntegrationArtifact.Id values (design-time artifact Id), save the file, then restart uvicorn from the backend directory so settings reload.",
+            "polled_artifact_ids": [],
+            "outcomes": [],
+            "incidents_stored": 0,
+        }
 
     logger.info("Monitoring cycle started — %d artifact(s): %s", len(ids), ids)
     trace(
@@ -57,9 +98,14 @@ def run_monitor_cycle(*, force: bool = False) -> None:
         % (force, ids, settings.scheduler_lookback_minutes, settings.cpi_use_mock)
     )
 
+    outcomes: list[dict[str, Any]] = []
+    stored_total = 0
     for aid in ids:
         try:
-            _process_one_artifact(aid)
+            outcome = _process_one_artifact(aid)
+            outcomes.append({"artifact_id": aid, "result": outcome})
+            if outcome == "stored":
+                stored_total += 1
         except Exception as exc:  # noqa: BLE001 — keep scheduler alive
             logger.exception("Monitor cycle failed for artifact_id=%s: %s", aid, exc)
             _record(
@@ -70,9 +116,21 @@ def run_monitor_cycle(*, force: bool = False) -> None:
                 analysis=None,
                 error=f"exception: {exc}",
             )
+            outcomes.append({"artifact_id": aid, "result": "exception", "detail": str(exc)[:800]})
+
+    return {
+        "polled_artifact_ids": ids,
+        "outcomes": outcomes,
+        "incidents_stored": stored_total,
+    }
 
 
-def _process_one_artifact(artifact_id: str) -> None:
+def _process_one_artifact(artifact_id: str) -> str:
+    """
+    Poll one artifact; persist a new incident when appropriate.
+
+    Return value is surfaced in ``POST /monitor/run-now`` ``outcomes[].result``.
+    """
     logs = fetch_recent_failed_logs(
         artifact_id,
         lookback_minutes=settings.scheduler_lookback_minutes,
@@ -88,7 +146,7 @@ def _process_one_artifact(artifact_id: str) -> None:
             analysis=None,
             error=None,
         )
-        return
+        return "skipped_no_failed_logs"
 
     trace(
         "Monitor: artifact=%s  fetch_recent_failed_logs → %s"
@@ -107,7 +165,7 @@ def _process_one_artifact(artifact_id: str) -> None:
             analysis=None,
             error=None,
         )
-        return
+        return "skipped_missing_message_guid"
 
     logger.info(
         "Incidents found: artifact_id=%s failed_log_rows=%d newest_message_id=%s",
@@ -126,7 +184,7 @@ def _process_one_artifact(artifact_id: str) -> None:
             analysis=None,
             error=None,
         )
-        return
+        return "skipped_duplicate_message_id"
 
     pkg = (newest.get("package_id") or "").strip() or None
     trace("Monitor: artifact=%s  running full agent (run_investigation) message_id=%r …" % (artifact_id, mid))
@@ -167,6 +225,7 @@ def _process_one_artifact(artifact_id: str) -> None:
         "Monitor: llm_analysis done  guid=%s  artifact=%s  error_type=%s  severity=%s  confidence=%s"
         % (mid, artifact_id, response.error_type, response.severity, response.confidence_score)
     )
+    return "stored" if stored else "investigation_ran_incident_not_stored"
 
 
 def _record(

@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from services.monitor import (
     get_monitor_history,
+    get_scheduler_runtime_status,
     monitored_artifact_ids,
     run_monitor_cycle,
 )
@@ -21,6 +22,7 @@ def monitor_status() -> dict:
         "interval_sec": settings.scheduler_interval_sec,
         "lookback_minutes": settings.scheduler_lookback_minutes,
         "monitored_artifact_ids": monitored_artifact_ids(),
+        **get_scheduler_runtime_status(),
     }
 
 
@@ -33,5 +35,9 @@ def monitor_history() -> dict:
 @router.post("/run-now")
 def monitor_run_now() -> dict:
     """Trigger one monitor cycle immediately (for demos / tests)."""
-    run_monitor_cycle(force=True)
-    return {"ok": True, "message": "Cycle executed (see /monitor/history)"}
+    summary = run_monitor_cycle(force=True)
+    return {
+        "ok": True,
+        "message": "Cycle finished — see outcomes for per-artifact results and GET /monitor/history.",
+        **summary,
+    }

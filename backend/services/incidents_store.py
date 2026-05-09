@@ -141,6 +141,34 @@ def insert_incident(
             con.close()
 
 
+def get_incident_by_message_id(message_id: str) -> dict[str, Any] | None:
+    """Single incident row by MPL ``message_id``, or None."""
+    if not settings.incidents_sqlite_enabled:
+        return None
+    mid = (message_id or "").strip()
+    if not mid:
+        return None
+    with _lock:
+        con = sqlite3.connect(str(incidents_db_path()), check_same_thread=False)
+        try:
+            _apply_schema(con)
+            cur = con.execute(
+                """
+                SELECT id, timestamp, message_id, iflow, error_type, severity, root_cause,
+                       recommendation, confidence_score, jira_ticket_id, investigation_status
+                FROM incidents WHERE message_id = ? LIMIT 1
+                """,
+                (mid,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, row))
+        finally:
+            con.close()
+
+
 def list_incidents(*, limit: int = 200) -> list[dict[str, Any]]:
     """Newest first for GET /incidents."""
     if not settings.incidents_sqlite_enabled:

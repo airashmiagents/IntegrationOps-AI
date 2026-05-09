@@ -40,6 +40,7 @@ def _apply_schema(con: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT NOT NULL,
             iflow_name TEXT,
+            message_id TEXT,
             exchange_path TEXT NOT NULL,
             model TEXT,
             http_status INTEGER,
@@ -52,6 +53,16 @@ def _apply_schema(con: sqlite3.Connection) -> None:
     )
     con.execute("CREATE INDEX IF NOT EXISTS idx_llm_exchange_created ON llm_exchange(created_at)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_llm_exchange_iflow ON llm_exchange(iflow_name)")
+    _ensure_llm_exchange_message_id_column(con)
+
+
+def _ensure_llm_exchange_message_id_column(con: sqlite3.Connection) -> None:
+    """Append ``message_id`` for correlating audit rows to MPL MessageGuid / incidents (existing DBs)."""
+    cur = con.execute("PRAGMA table_info(llm_exchange)")
+    cols = {str(r[1]) for r in cur.fetchall()}
+    if "message_id" not in cols:
+        con.execute("ALTER TABLE llm_exchange ADD COLUMN message_id TEXT")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_llm_exchange_message_id ON llm_exchange(message_id)")
 
 
 def init_llm_audit_db() -> None:
@@ -83,6 +94,7 @@ def log_llm_exchange(
     raw_assistant_text: str | None,
     response_obj: dict[str, Any] | None,
     error_note: str | None = None,
+    message_id: str | None = None,
 ) -> None:
     """
     Persist one row: exact ``messages`` array sent to chat/completions (or same shape for
@@ -98,6 +110,7 @@ def log_llm_exchange(
     raw = raw_assistant_text if raw_assistant_text is not None else None
     if raw is not None and len(raw) > 1_000_000:
         raw = raw[:1_000_000] + "\n… (truncated)"
+    mid = (message_id or "").strip()[:512] or None
 
     with _lock:
         path = audit_db_path()
@@ -108,13 +121,14 @@ def log_llm_exchange(
             con.execute(
                 """
                 INSERT INTO llm_exchange (
-                    created_at, iflow_name, exchange_path, model, http_status,
+                    created_at, iflow_name, message_id, exchange_path, model, http_status,
                     request_messages_json, raw_assistant_text, response_json, error_note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     created,
                     iflow_name[:512] if iflow_name else None,
+                    mid,
                     exchange_path[:128],
                     model[:512] if model else None,
                     http_status,
@@ -127,5 +141,40 @@ def log_llm_exchange(
             con.commit()
         except Exception as exc:  # noqa: BLE001 — never break the agent on audit failure
             logger.warning("LLM audit insert failed: %s", exc)
+        finally:
+            con.close()
+
+
+def list_exchanges_for_message_id(message_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """
+    Rows from ``llm_exchange`` for one MPL MessageGuid.
+
+    Matches explicit ``message_id`` column when set; falls back to ``instr`` on
+    ``request_messages_json`` for legacy rows (briefing embeds the GUID).
+    """
+    if not settings.llm_audit_sqlite_enabled:
+        return []
+    mid = (message_id or "").strip()
+    if not mid:
+        return []
+    lim = max(1, min(200, int(limit)))
+    with _lock:
+        con = sqlite3.connect(str(audit_db_path()), check_same_thread=False)
+        try:
+            _apply_schema(con)
+            cur = con.execute(
+                """
+                SELECT id, created_at, iflow_name, message_id, exchange_path, model, http_status,
+                       request_messages_json, raw_assistant_text, response_json, error_note
+                FROM llm_exchange
+                WHERE (message_id IS NOT NULL AND message_id = ?)
+                   OR (COALESCE(message_id, '') = '' AND instr(request_messages_json, ?) > 0)
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT ?
+                """,
+                (mid, mid, lim),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
         finally:
             con.close()

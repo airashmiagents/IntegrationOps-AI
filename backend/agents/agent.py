@@ -107,6 +107,7 @@ def run_investigation(
     raw_llm: dict[str, Any] = analyze_with_openrouter(
         briefing,
         iflow_name=iflow_name,
+        message_id=message_id,
         logs_used=logs_used,
         metadata_used=metadata_used,
         brief_operator_hint=brief_hint or None,

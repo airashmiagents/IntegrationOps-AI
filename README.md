@@ -3,7 +3,7 @@
 Hackathon project for **AI-assisted SAP Cloud Integration (CPI)** monitoring and autonomous incident analysis: failed Message Processing Logs (MPL), design-time metadata, and an OpenRouter-backed investigation agent with structured JSON output, confidence scoring, and optional SQLite audit trails.
 
 - **Backend:** [FastAPI](https://fastapi.tiangolo.com/) — CPI OData clients, APScheduler monitor, SQLite persistence, OpenRouter LLM (with heuristic fallback).
-- **Frontend:** [React](https://react.dev/) (Vite) — dashboard with health check and **auto-refreshing incidents** (30s) from `GET /incidents`.
+- **Frontend:** [React](https://react.dev/) (Vite) — **Dashboard** (health, run-monitor demo, auto-refreshing incidents every 30s) and **Monitor lifecycle** (incidents + LLM audit + in-process monitor history per MessageGuid).
 
 No Celery, Kafka, Redis, or Kubernetes — stdlib SQLite and APScheduler only.
 
@@ -12,20 +12,23 @@ No Celery, Kafka, Redis, or Kubernetes — stdlib SQLite and APScheduler only.
 ```text
 IntegrationOps-AI/
 ├── backend/
-│   ├── main.py                 # FastAPI app, lifespan (scheduler + DB init)
+│   ├── main.py                 # FastAPI app, lifespan (scheduler + DB init); same routes under /api/*
 │   ├── requirements.txt
 │   ├── .env.example            # Copy to .env — CPI, OpenRouter, monitor, SQLite flags
 │   ├── agents/                 # run_investigation — CPI → context → LLM
 │   ├── models/                 # Pydantic schemas (agent + incidents)
-│   ├── routes/                 # health, agent, monitor, incidents
-│   └── services/               # cpi_client, ai_service, monitor, incidents_store, llm_audit_sqlite, settings
+│   ├── routes/                 # health, agent, monitor, observability, incidents
+│   └── services/               # cpi_client, ai_service, monitor, incidents_store, llm_audit_sqlite, settings, …
 ├── frontend/
-│   ├── src/pages/Dashboard.jsx # Health + incidents table (30s poll)
-│   └── src/services/api.js     # fetchHealth, fetchIncidents
+│   ├── src/pages/
+│   │   ├── Dashboard.jsx       # Health, POST /monitor/run-now demo, incidents table (30s poll)
+│   │   └── MonitorLifecycle.jsx  # DB + agent steps + llm_exchange + monitor/history-style buffer
+│   ├── src/components/Header.jsx # Nav: Dashboard, Monitor lifecycle
+│   └── src/services/api.js     # Health, incidents, monitor, observability helpers
 └── README.md
 ```
 
-Local SQLite files (gitignored): `backend/llm_audit.sqlite` (LLM prompts/responses), `backend/incidents.sqlite` (persisted monitor incidents).
+Local SQLite files (gitignored): `backend/llm_audit.sqlite` (LLM prompts/responses, keyed by `message_id` when available), `backend/incidents.sqlite` (persisted monitor incidents, deduped by `message_id`).
 
 ## Quick start
 
@@ -36,11 +39,11 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env               # Edit: CPI URL, credentials, OpenRouter key, monitor IDs
+cp .env.example .env               # Edit: CPI URL, credentials, OpenRouter key, MONITOR_IFLOW_IDS
 uvicorn main:app --reload --port 8000
 ```
 
-Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apscheduler` and other deps resolve).
+Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apscheduler` and other deps resolve). Any port is fine; point the Vite proxy at the same port (see Frontend).
 
 Open [http://localhost:8000/docs](http://localhost:8000/docs) for interactive API docs.
 
@@ -48,23 +51,32 @@ Open [http://localhost:8000/docs](http://localhost:8000/docs) for interactive AP
 
 ```bash
 cd frontend
-cp .env.example .env               # Set VITE_API_URL to match backend (e.g. http://127.0.0.1:8000)
+cp .env.example .env               # Set VITE_API_PROXY_TARGET if uvicorn is not on port 8000 (e.g. http://127.0.0.1:8005)
 npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The dashboard loads **`GET /health`** and **`GET /incidents`** every **30 seconds**.
+In development, the UI defaults to same-origin **`/api/...`**, which Vite proxies to FastAPI (`vite.config.js` → `VITE_API_PROXY_TARGET`). Avoid setting **`VITE_API_URL`** unless you intentionally want the browser to call the API host directly (then it must match the real uvicorn port and CORS).
+
+Open [http://localhost:5173](http://localhost:5173):
+
+- **/** — Dashboard: **`GET /health`**, **`GET /incidents`**, **`POST /monitor/run-now`** (structured JSON + hints when the cycle skips, e.g. empty `MONITOR_IFLOW_IDS`).
+- **/monitor/lifecycle** — Operator view: each incident joined with **`llm_exchange`** rows and in-memory monitor runs for that MPL MessageGuid; optional **`?message_id=<guid>`** deep link.
 
 ## Main API endpoints
+
+Same routes are mounted at the root and under **`/api`** (e.g. `/api/health` and `/health`) for proxies and prefixed clients.
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Liveness |
 | `POST` | `/agent/investigate` | On-demand full investigation (CPI + LLM) |
-| `GET` | `/monitor/status` | Scheduler config and monitored artifact IDs |
-| `GET` | `/monitor/history` | Recent in-memory monitor run summaries |
-| `POST` | `/monitor/run-now` | Force one monitor cycle (for demos) |
+| `GET` | `/monitor/status` | Scheduler config, monitored artifact IDs, runtime fields (e.g. next poll) |
+| `GET` | `/monitor/history` | Recent in-memory monitor run summaries (cleared on process restart) |
+| `POST` | `/monitor/run-now` | One monitor cycle immediately; response includes `outcomes`, `incidents_stored`, and `skipped`/`hint` when nothing was polled |
 | `GET` | `/incidents?limit=100` | Persisted incidents from SQLite (`{ "incidents": [ ... ] }`) |
+| `GET` | `/observability/lifecycles` | Incidents + per-row `llm_exchanges`, `monitor_runs`, `agent_canonical_steps` |
+| `GET` | `/observability/lifecycle/{message_id}` | Single incident drill-down (404 if not in `incidents` SQLite) |
 
 ## Autonomous background monitor
 
@@ -73,11 +85,19 @@ When **`SCHEDULER_ENABLED=true`**, **`CPI_USE_MOCK=false`**, and **`MONITOR_IFLO
 Each cycle:
 
 1. Calls SAP CPI OData APIs for recent **FAILED** MPL rows per artifact.
-2. Skips duplicates when **`message_id`** (MessageGuid) already exists in **`incidents`** SQLite.
-3. Runs the full **`run_investigation`** pipeline (same as `/agent/investigate`).
-4. Appends a row to the **`incidents`** table (`error_type`, `severity`, `confidence_score`, `root_cause`, `recommendation`, optional **`jira_ticket_id`**, **`investigation_status`**).
+2. If **`MONITOR_IFLOW_IDS`** is empty, the cycle does nothing useful (no CPI poll); **`POST /monitor/run-now`** and the Dashboard surface a **`skipped`** reason and **`hint`** in JSON.
+3. Skips duplicates when **`message_id`** (MessageGuid) already exists in **`incidents`** SQLite.
+4. Runs the full **`run_investigation`** pipeline (same as `/agent/investigate`).
+5. Appends a row to the **`incidents`** table (`error_type`, `severity`, `confidence_score`, `root_cause`, `recommendation`, optional **`jira_ticket_id`**, **`investigation_status`**).
+
+If there are no FAILED rows in the lookback window, the artifact outcome is **`skipped_no_failed_logs`** — no new incident row.
 
 Logs include: monitoring cycle started, incidents found (counts / message id), and incident analysis completed (including whether the row was stored).
+
+## Observability
+
+- **`GET /observability/lifecycles`** — Joins **`incidents.sqlite`** with matching rows from **`llm_audit.sqlite`** (`llm_exchange`), using **`message_id`** when present or a briefing substring match for older audit rows. Also attaches matching entries from the in-process monitor buffer (same source as **`GET /monitor/history`**).
+- **Monitor lifecycle** page in the UI consumes this endpoint for demo-friendly drill-down.
 
 ## Environment highlights
 
@@ -85,7 +105,7 @@ See **`backend/.env.example`** for the full list. Notable variables:
 
 - **CPI:** `SAP_CPI_BASE_URL`, `SAP_CPI_USER`, `SAP_CPI_PASSWORD`, `CPI_USE_MOCK`, `SAP_CPI_API_ROOT`
 - **OpenRouter:** `OPENROUTER_API_KEY` / `LLM_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL`
-- **Monitor:** `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_SEC`, `MONITOR_IFLOW_IDS`, `SCHEDULER_LOOKBACK_MINUTES`
+- **Monitor:** `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_SEC`, **`MONITOR_IFLOW_IDS`** (required for real polling), `SCHEDULER_LOOKBACK_MINUTES`
 - **SQLite:** `LLM_AUDIT_SQLITE_ENABLED`, `INCIDENTS_SQLITE_ENABLED`, optional `*_SQLITE_PATH` overrides
 - **Terminal trace:** `AGENT_TERMINAL_TRACE=true` — step-by-step CPI + LLM narrative to stderr
 

@@ -128,6 +128,7 @@ def analyze_with_openrouter(
     enriched_context: str,
     *,
     iflow_name: str,
+    message_id: str | None = None,
     logs_used: bool,
     metadata_used: bool,
     brief_operator_hint: str | None = None,
@@ -166,6 +167,7 @@ def analyze_with_openrouter(
             raw_assistant_text=None,
             response_obj=result,
             error_note="OpenRouter API key not configured",
+            message_id=message_id,
         )
         trace("OpenRouter: no API key → heuristic structured output")
         trace_llm_outcome(path="heuristic_no_api_key", model=None, payload=result)
@@ -206,6 +208,7 @@ def analyze_with_openrouter(
                 raw_assistant_text=res.raw_assistant_text,
                 response_obj=res.parsed,
                 error_note=None,
+                message_id=message_id,
             )
             if i > 0:
                 logger.info("OpenRouter succeeded with fallback model=%s", model)
@@ -220,6 +223,7 @@ def analyze_with_openrouter(
             raw_assistant_text=res.raw_assistant_text,
             response_obj={},
             error_note=res.error_note,
+            message_id=message_id,
         )
         if i == 0 and len(models) > 1:
             logger.warning("OpenRouter primary model=%s failed — retrying fallback model=%s", primary, models[1])
@@ -240,6 +244,7 @@ def analyze_with_openrouter(
         raw_assistant_text=None,
         response_obj=result,
         error_note="All OpenRouter model attempts failed; heuristic output returned",
+        message_id=message_id,
     )
     trace("OpenRouter: all configured models failed → heuristic structured output")
     trace_llm_outcome(path="heuristic_after_openrouter_fail", model=None, payload=result)
