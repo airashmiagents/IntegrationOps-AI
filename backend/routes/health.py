@@ -10,4 +10,9 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", app_name=settings.app_name)
+    return HealthResponse(
+        status="ok",
+        app_name=settings.app_name,
+        mock_alert_email=(settings.mock_alert_email or "integrationops-alerts@demo.example.com").strip()
+        or "integrationops-alerts@demo.example.com",
+    )

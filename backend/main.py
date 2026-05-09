@@ -6,7 +6,8 @@ backend/
 Python API for CPI monitoring hooks and AI-assisted incident analysis.
 
 Run locally:  uvicorn main:app --reload --port 8000
-API docs:      http://localhost:8000/docs
+Deploy:       uvicorn main:app --host 0.0.0.0 --port $PORT  (see Procfile in this folder)
+API docs:      http://localhost:<port>/docs
 """
 
 from contextlib import asynccontextmanager
@@ -35,13 +36,12 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
-# Allow the Vite dev server to call the API during development.
+# Hackathon / Render: allow any frontend origin. ``allow_origins=["*"]`` requires
+# ``allow_credentials=False`` (browser + ASGI spec — wildcard cannot be combined with credentialed CORS).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    # Dev: any localhost / 127.0.0.1 port (alternate Vite ports, file previews, etc.).
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

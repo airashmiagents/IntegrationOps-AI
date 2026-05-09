@@ -10,6 +10,8 @@ class Settings(BaseSettings):
 
     app_name: str = "IntegrationOps-AI"
     debug: bool = False
+    # Shown on dashboard / GET /health for demo “where alerts would go” (no mail is sent).
+    mock_alert_email: str = "integrationops-alerts@demo.example.com"
 
     # SAP Cloud Integration — tenant host only, e.g. https://<account>-tmn.<region>.hana.ondemand.com
     sap_cpi_base_url: str = ""

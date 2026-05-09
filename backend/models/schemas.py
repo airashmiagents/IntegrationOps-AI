@@ -13,6 +13,10 @@ class HealthResponse(BaseModel):
 
     status: str
     app_name: str
+    mock_alert_email: str = Field(
+        default="integrationops-alerts@demo.example.com",
+        description="Hackathon placeholder address shown in the UI as the mock notification target.",
+    )
 
 
 class AgentInvestigationRequest(BaseModel):

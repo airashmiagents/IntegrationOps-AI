@@ -1,0 +1,2 @@
+# Render / Heroku-style process. Set service "Root Directory" to `backend` if deploying from monorepo root.
+web: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
