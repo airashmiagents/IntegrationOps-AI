@@ -29,7 +29,19 @@ IntegrationOps-AI/
 │   │   └── MonitorLifecycle.jsx  # DB + agent steps + llm_exchange + monitor/history-style buffer
 │   ├── src/components/Header.jsx # Nav: Dashboard, Monitor lifecycle
 │   └── src/services/api.js     # Health, incidents, monitor, observability helpers
+├── presentation/
+│   ├── IntegrationOps-AI-Deck.pptx   # Hackathon / investor deck (regenerate via generate_deck.py)
+│   ├── generate_deck.py
+│   └── requirements-pptx.txt
 └── README.md
+```
+
+### Pitch deck (PowerPoint)
+
+Dark, minimal **10-slide** deck: **`presentation/IntegrationOps-AI-Deck.pptx`**. To regenerate after editing copy:
+
+```bash
+cd presentation && pip install -r requirements-pptx.txt && python generate_deck.py
 ```
 
 Local SQLite files (gitignored): `backend/llm_audit.sqlite` (LLM prompts/responses, keyed by `message_id` when available), `backend/incidents.sqlite` (persisted monitor incidents, deduped by `message_id`).
