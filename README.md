@@ -11,6 +11,7 @@ No Celery, Kafka, Redis, or Kubernetes — stdlib SQLite and APScheduler only.
 
 ```text
 IntegrationOps-AI/
+├── render.yaml                 # Optional Render Blueprint (correct startCommand for FastAPI)
 ├── backend/
 │   ├── main.py                 # FastAPI app, lifespan (scheduler + DB init); same routes under /api/*
 │   ├── requirements.txt        # fastapi, uvicorn, openai, python-dotenv, …
@@ -49,11 +50,14 @@ Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apschedu
 
 #### Deploy backend (Render)
 
-- **ASGI entry:** `main:app` (same as `uvicorn main:app`).
-- **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`, or use **`backend/Procfile`** (`web: …`) if the platform picks it up.
-- **Root directory:** set to **`backend`** when the repo root is `IntegrationOps-AI`.
-- **Build:** `pip install -r requirements.txt`.
-- **CORS:** `allow_origins=["*"]` for hackathon demos (any deployed frontend origin). **`allow_credentials=False`** is required with a wildcard origin (browsers reject `*` with credentialed requests).
+- **Start command (required):** run uvicorn as a full shell command — **`uvicorn main:app --host 0.0.0.0 --port $PORT`**.  
+  **Do not** put only **`main:app`** in Render’s start field: the shell will try to execute `main:app` as a command and fail with `command not found`. The fragment **`main:app`** is only the **module:callable** argument to uvicorn, not the process to run.
+- **ASGI target:** that same **`main:app`** string appears **inside** the uvicorn command above.
+- **Root directory:** **`backend`** when the Git repo root is `IntegrationOps-AI`.
+- **Build command:** **`pip install -r requirements.txt`** (same folder as `requirements.txt`).
+- **Blueprint:** repo root **`render.yaml`** sets `rootDir`, `buildCommand`, and **`startCommand`** for you if you deploy via **Blueprint**.
+- **`backend/Procfile`:** `web: uvicorn …` — some hosts use it; on Render you still often set **Start Command** explicitly in the dashboard to match.
+- **CORS:** `allow_origins=["*"]` for hackathon demos. **`allow_credentials=False`** with a wildcard origin (browser rules).
 
 ### Frontend
 

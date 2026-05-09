@@ -6,7 +6,7 @@ backend/
 Python API for CPI monitoring hooks and AI-assisted incident analysis.
 
 Run locally:  uvicorn main:app --reload --port 8000
-Deploy:       uvicorn main:app --host 0.0.0.0 --port $PORT  (see Procfile in this folder)
+Deploy:       uvicorn main:app --host 0.0.0.0 --port $PORT  (Render: never use ``main:app`` alone as start — see README / render.yaml)
 API docs:      http://localhost:<port>/docs
 """
 

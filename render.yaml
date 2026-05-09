@@ -1,0 +1,10 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# New → Blueprint → connect repo, or paste this file. Adjust name/region/plan as needed.
+services:
+  - type: web
+    name: integrationops-ai-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # IMPORTANT: must be a shell command. Do NOT use only "main:app" (that is not executable).
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
