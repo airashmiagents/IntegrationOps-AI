@@ -10,7 +10,7 @@
  * API base URL:
  * - If ``VITE_API_URL`` is set → use it (direct calls; backend must allow this origin in CORS).
  * - In dev with no env → ``/api`` so Vite proxies to FastAPI (same origin, no CORS pain).
- * - Production build without env → localhost:8000 (override with VITE_API_URL in deploy).
+ * - Production build without ``VITE_API_URL`` → falls back to localhost (set ``VITE_API_URL`` on Vercel).
  */
 function apiBase() {
   const raw = import.meta.env.VITE_API_URL;

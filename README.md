@@ -22,6 +22,7 @@ IntegrationOps-AI/
 │   ├── routes/                 # health, agent, monitor, observability, incidents
 │   └── services/               # cpi_client, ai_service, monitor, incidents_store, llm_audit_sqlite, settings, …
 ├── frontend/
+│   ├── vercel.json             # Vercel: SPA fallback rewrites for React Router (Vite build is auto-detected)
 │   ├── src/pages/
 │   │   ├── Dashboard.jsx       # Health, POST /monitor/run-now demo, incidents table (30s poll)
 │   │   ├── MockAlertInbox.jsx  # Fake email UI for CPI alert previews (no SMTP)
@@ -69,6 +70,16 @@ npm run dev
 ```
 
 In development, the UI defaults to same-origin **`/api/...`**, which Vite proxies to FastAPI (`vite.config.js` → `VITE_API_PROXY_TARGET`). For a **hosted** API (e.g. Render), set **`VITE_API_URL`** to that base URL (no trailing slash); the backend allows **`Origin: *`** style CORS for hackathon use.
+
+#### Deploy frontend (Vercel)
+
+1. **New Project** in [Vercel](https://vercel.com/) → Import the same Git repo as the backend.
+2. **Root Directory:** set to **`frontend`** (monorepo).
+3. **Framework:** Vite (auto-detected). **Build:** `npm run build` · **Output:** `dist`.
+4. **Environment variable (Production — required for API calls):**  
+   **`VITE_API_URL`** = your Render service URL, e.g. **`https://your-api.onrender.com`** (no trailing slash, no `/api` suffix — the app calls **`{VITE_API_URL}/health`**, **`/incidents`**, etc.).  
+   Vite inlines `VITE_*` at **build** time: add the variable, then **Redeploy** so the bundle picks it up.
+5. **`vercel.json`** includes SPA **rewrites** so routes like **`/monitor/lifecycle`** and **`/alerts/mock-inbox`** work on refresh.
 
 Open [http://localhost:5173](http://localhost:5173):
 
