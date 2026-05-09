@@ -14,3 +14,10 @@ export async function fetchHealth() {
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json();
 }
+
+/** Latest autonomous-monitor incidents (SQLite); newest first. */
+export async function fetchIncidents(limit = 100) {
+  const res = await fetch(`${base}/incidents?limit=${encodeURIComponent(limit)}`);
+  if (!res.ok) throw new Error(`Incidents fetch failed: ${res.status}`);
+  return res.json();
+}

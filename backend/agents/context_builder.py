@@ -39,8 +39,10 @@ def build_context(
     lines.append(json.dumps(runtime_logs, indent=2))
     lines.append("```")
     lines.append("")
-    lines.append("## SECTION B — iFlow artifact metadata")
-    lines.append("Design-time summary (tool: fetch_iflow_metadata):")
+    lines.append("## SECTION B — iFlow design-time artifact (OData) + derived summary")
+    lines.append(
+        "IntegrationDesigntimeArtifacts, Configurations, Resources, and mapping hints (tool: fetch_iflow_metadata):"
+    )
     lines.append("")
     lines.append("```json")
     lines.append(json.dumps(iflow_metadata, indent=2))

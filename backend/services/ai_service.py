@@ -10,10 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
+from services.agent_trace import trace, trace_llm_outcome
+from services.llm_audit_sqlite import log_llm_exchange
 from services.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,7 @@ Required JSON shape:
   "error_summary": "<string>",
   "error_type": "PKIX | AUTH | TIMEOUT | MAPPING | UNKNOWN",
   "severity": "LOW | MEDIUM | HIGH | CRITICAL",
+  "confidence_score": <integer 0-100 inclusive, JSON number not string>,
   "root_cause": "<string>",
   "recommendation": "<string>",
   "evidence": {
@@ -41,9 +45,20 @@ Required JSON shape:
 Rules:
 - error_type must be exactly one of: PKIX, AUTH, TIMEOUT, MAPPING, UNKNOWN
 - severity must be exactly one of: LOW, MEDIUM, HIGH, CRITICAL
+- confidence_score MUST be a single JSON integer from 0 to 100 (never a float string like "85.0" as text; use 85)
 - Base conclusions on the briefing; if unclear, use UNKNOWN and explain in root_cause
 - evidence.logs_used / metadata_used reflect whether log/metadata sections contained usable facts
 - agent_flow must list exactly those four steps in order
+
+Confidence scoring (calibrate confidence_score to evidence strength, not model self-belief):
+- High (80-100): Classic CPI signals with matching evidence — e.g. PKIX / SSLHandshake / certificate chain in logs
+  aligned with error_type PKIX; HTTP 401/403/OAuth failures with clear MPL text for AUTH; explicit timeout errors
+  with adapter and timestamps for TIMEOUT. Prefer high scores only when runtime logs AND/OR rich metadata clearly
+  support the chosen error_type and root_cause.
+- Medium (50-79): Partial or mixed evidence — sparse MPL lines, generic errors, or metadata_used but logs_used
+  weak (or vice versa); reasonable inference but not airtight.
+- Low (0-49): UNKNOWN error_type, vague "Internal Server Error", missing MessageGuid context, empty or contradictory
+  sections, or conclusion not well supported by the briefing — score low even if you guess a category.
 """
 
 
@@ -53,6 +68,60 @@ def _strip_json_fence(text: str) -> str:
     if m:
         return m.group(1).strip()
     return text
+
+
+def _chat_messages_for_audit(user_prompt: str) -> list[dict[str, str]]:
+    """Exact system + user texts sent to OpenRouter (used for SQLite audit rows)."""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+@dataclass
+class OpenRouterCallResult:
+    """Outcome of one chat/completions POST — parsed dict if valid JSON, else diagnostics."""
+
+    parsed: dict[str, Any] | None
+    raw_assistant_text: str | None
+    http_status: int | None
+    error_note: str | None
+
+
+def _openrouter_chat_json(
+    *,
+    url: str,
+    headers: dict[str, str],
+    model: str,
+    user_prompt: str,
+) -> OpenRouterCallResult:
+    """Single chat/completions call; parsed JSON or None with HTTP / parse error notes."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": _chat_messages_for_audit(user_prompt),
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+    raw: str | None = None
+    status: int | None = None
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            r = client.post(url, headers=headers, json=payload)
+        status = r.status_code
+        if r.status_code != 200:
+            logger.warning("OpenRouter model=%s HTTP %s: %s", model, r.status_code, r.text[:800])
+            return OpenRouterCallResult(None, None, status, r.text[:8000])
+        body = r.json()
+        content = body["choices"][0]["message"]["content"]
+        if isinstance(content, list):
+            raw = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        else:
+            raw = str(content)
+        parsed = json.loads(_strip_json_fence(raw))
+        return OpenRouterCallResult(parsed, raw, status, None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter model=%s failed: %s", model, exc)
+        return OpenRouterCallResult(None, raw, status, str(exc)[:8000])
 
 
 def analyze_with_openrouter(
@@ -66,38 +135,43 @@ def analyze_with_openrouter(
     """
     Send enriched context to OpenRouter; return parsed dict matching agent schema.
 
-    Falls back to heuristic JSON if API key missing or request fails.
+    Tries ``openrouter_model`` first, then ``openrouter_fallback_model`` when set and distinct.
+    Falls back to heuristic JSON if API key missing or all model attempts fail.
     """
     key = settings.effective_openrouter_key()
     base = settings.effective_openrouter_base()
-    model = settings.openrouter_model
 
     user_prompt = (
         "Analyze the following CPI incident briefing and produce the JSON object.\n\n"
         f"BRIEFING:\n{enriched_context}\n\n"
+        "Include confidence_score as a JSON integer from 0 to 100 (not quoted, not float).\n\n"
         f"Internal hints (do not echo verbatim): logs_used_hint={logs_used}, metadata_used_hint={metadata_used}"
     )
 
     if not key:
         logger.info("OpenRouter API key not set — using heuristic agent output")
-        return _heuristic_analysis(
+        result = _heuristic_analysis(
             enriched_context,
             iflow_name=iflow_name,
             logs_used=logs_used,
             metadata_used=metadata_used,
             brief_operator_hint=brief_operator_hint,
         )
+        log_llm_exchange(
+            iflow_name=iflow_name,
+            exchange_path="heuristic_no_api_key",
+            model=None,
+            http_status=None,
+            request_messages=_chat_messages_for_audit(user_prompt),
+            raw_assistant_text=None,
+            response_obj=result,
+            error_note="OpenRouter API key not configured",
+        )
+        trace("OpenRouter: no API key → heuristic structured output")
+        trace_llm_outcome(path="heuristic_no_api_key", model=None, payload=result)
+        return result
 
     url = f"{base.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-    }
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -105,33 +179,108 @@ def analyze_with_openrouter(
         "X-Title": settings.openrouter_app_title,
     }
 
-    try:
-        with httpx.Client(timeout=120.0) as client:
-            r = client.post(url, headers=headers, json=payload)
-        if r.status_code != 200:
-            logger.warning("OpenRouter HTTP %s: %s", r.status_code, r.text[:800])
-            return _heuristic_analysis(
-                enriched_context,
+    primary = (settings.openrouter_model or "").strip()
+    fb_raw = (settings.openrouter_fallback_model or "").strip()
+    models: list[str] = []
+    if primary:
+        models.append(primary)
+    if fb_raw and fb_raw != primary and fb_raw not in models:
+        models.append(fb_raw)
+
+    trace(
+        "OpenRouter: POST chat/completions  models=%r  user_prompt_chars=%s  iflow=%r"
+        % (models, len(user_prompt), iflow_name)
+    )
+
+    msgs = _chat_messages_for_audit(user_prompt)
+    for i, model in enumerate(models):
+        path = "openrouter_primary" if i == 0 else "openrouter_fallback"
+        res = _openrouter_chat_json(url=url, headers=headers, model=model, user_prompt=user_prompt)
+        if res.parsed is not None:
+            log_llm_exchange(
                 iflow_name=iflow_name,
-                logs_used=logs_used,
-                metadata_used=metadata_used,
-                brief_operator_hint=brief_operator_hint,
+                exchange_path=path,
+                model=model,
+                http_status=res.http_status,
+                request_messages=msgs,
+                raw_assistant_text=res.raw_assistant_text,
+                response_obj=res.parsed,
+                error_note=None,
             )
-        body = r.json()
-        content = body["choices"][0]["message"]["content"]
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        parsed = json.loads(_strip_json_fence(str(content)))
-        return parsed
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("OpenRouter call failed: %s", exc)
-        return _heuristic_analysis(
-            enriched_context,
+            if i > 0:
+                logger.info("OpenRouter succeeded with fallback model=%s", model)
+            trace_llm_outcome(path="openrouter_json", model=model, payload=res.parsed)
+            return res.parsed
+        log_llm_exchange(
             iflow_name=iflow_name,
-            logs_used=logs_used,
-            metadata_used=metadata_used,
-            brief_operator_hint=brief_operator_hint,
+            exchange_path=path + "_failed",
+            model=model,
+            http_status=res.http_status,
+            request_messages=msgs,
+            raw_assistant_text=res.raw_assistant_text,
+            response_obj={},
+            error_note=res.error_note,
         )
+        if i == 0 and len(models) > 1:
+            logger.warning("OpenRouter primary model=%s failed — retrying fallback model=%s", primary, models[1])
+
+    result = _heuristic_analysis(
+        enriched_context,
+        iflow_name=iflow_name,
+        logs_used=logs_used,
+        metadata_used=metadata_used,
+        brief_operator_hint=brief_operator_hint,
+    )
+    log_llm_exchange(
+        iflow_name=iflow_name,
+        exchange_path="heuristic_after_openrouter_fail",
+        model=None,
+        http_status=None,
+        request_messages=msgs,
+        raw_assistant_text=None,
+        response_obj=result,
+        error_note="All OpenRouter model attempts failed; heuristic output returned",
+    )
+    trace("OpenRouter: all configured models failed → heuristic structured output")
+    trace_llm_outcome(path="heuristic_after_openrouter_fail", model=None, payload=result)
+    return result
+
+
+def _heuristic_confidence(
+    error_type: str,
+    *,
+    logs_used: bool,
+    metadata_used: bool,
+    brief_operator_hint: str | None,
+) -> int:
+    """
+    Offline confidence: same rubric as the LLM prompt, simplified for keyword routing.
+
+    Strong known patterns (PKIX/AUTH) plus structured logs or a clear operator hint → high band.
+    TIMEOUT/MAPPING with weaker single-source evidence → medium.
+    UNKNOWN or vague text with little corroboration → low.
+    """
+    hint = (brief_operator_hint or "").strip()
+    hint_strong = len(hint) >= 24
+    both_evidence = logs_used and metadata_used
+    one_evidence = logs_used or metadata_used
+
+    if error_type in ("PKIX", "AUTH"):
+        if (logs_used and hint_strong) or both_evidence:
+            return 85
+        if logs_used or hint_strong or metadata_used:
+            return 70
+        return 55
+    if error_type in ("TIMEOUT", "MAPPING"):
+        if both_evidence:
+            return 68
+        if one_evidence:
+            return 58
+        return 48
+    # UNKNOWN — align with "low confidence" band when the heuristic cannot classify.
+    if one_evidence:
+        return 38
+    return 22
 
 
 def _heuristic_analysis(
@@ -172,11 +321,15 @@ def _heuristic_analysis(
 
     hint = (brief_operator_hint or "").strip()
     summary = hint[:280] if hint else text.replace("\n", " ")[:280]
+    confidence = _heuristic_confidence(
+        et, logs_used=logs_used, metadata_used=metadata_used, brief_operator_hint=brief_operator_hint
+    )
     return {
         "iflow": iflow_name,
         "error_summary": summary or "No summary — enable CPI logs or provide error_message.",
         "error_type": et,
         "severity": sev,
+        "confidence_score": confidence,
         "root_cause": root,
         "recommendation": rec,
         "evidence": {"logs_used": logs_used, "metadata_used": metadata_used},

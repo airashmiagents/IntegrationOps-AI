@@ -17,6 +17,8 @@ def investigate(body: AgentInvestigationRequest) -> AgentInvestigationResponse:
     """
     return run_investigation(
         iflow_name=body.iflow_name.strip(),
+        iflow_version=body.iflow_version.strip() if body.iflow_version else None,
+        integration_package_id=body.integration_package_id.strip() if body.integration_package_id else None,
         message_id=body.message_id.strip() if body.message_id else None,
         error_message=body.error_message.strip() if body.error_message else None,
     )
