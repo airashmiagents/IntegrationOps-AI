@@ -40,12 +40,10 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env               # Edit: CPI URL, credentials, OpenRouter key, MONITOR_IFLOW_IDS
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8000   # use any free port, e.g. --port 8005
 ```
 
-Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apscheduler` and other deps resolve). Any port is fine; point the Vite proxy at the same port (see Frontend).
-
-Open [http://localhost:8000/docs](http://localhost:8000/docs) for interactive API docs.
+Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apscheduler` and other deps resolve). The **interactive OpenAPI docs** live at **`http://127.0.0.1:<port>/docs`** on the **same port** you pass to `--port` (not a fixed 8000). Examples: `http://127.0.0.1:8000/docs`, `http://127.0.0.1:8005/docs`. Point the Vite proxy (`VITE_API_PROXY_TARGET`) at that same origin (see Frontend).
 
 ### Frontend
 
