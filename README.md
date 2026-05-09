@@ -13,7 +13,8 @@ No Celery, Kafka, Redis, or Kubernetes — stdlib SQLite and APScheduler only.
 IntegrationOps-AI/
 ├── backend/
 │   ├── main.py                 # FastAPI app, lifespan (scheduler + DB init); same routes under /api/*
-│   ├── requirements.txt
+│   ├── requirements.txt        # fastapi, uvicorn, openai, python-dotenv, …
+│   ├── Procfile                # Render/Heroku: web → uvicorn main:app --host 0.0.0.0 --port $PORT
 │   ├── .env.example            # Copy to .env — CPI, OpenRouter, monitor, SQLite flags
 │   ├── agents/                 # run_investigation — CPI → context → LLM
 │   ├── models/                 # Pydantic schemas (agent + incidents)
@@ -22,6 +23,7 @@ IntegrationOps-AI/
 ├── frontend/
 │   ├── src/pages/
 │   │   ├── Dashboard.jsx       # Health, POST /monitor/run-now demo, incidents table (30s poll)
+│   │   ├── MockAlertInbox.jsx  # Fake email UI for CPI alert previews (no SMTP)
 │   │   └── MonitorLifecycle.jsx  # DB + agent steps + llm_exchange + monitor/history-style buffer
 │   ├── src/components/Header.jsx # Nav: Dashboard, Monitor lifecycle
 │   └── src/services/api.js     # Health, incidents, monitor, observability helpers
@@ -45,6 +47,14 @@ uvicorn main:app --reload --port 8000   # use any free port, e.g. --port 8005
 
 Use **`./.venv/bin/uvicorn`** if you do not activate the venv (ensures `apscheduler` and other deps resolve). The **interactive OpenAPI docs** live at **`http://127.0.0.1:<port>/docs`** on the **same port** you pass to `--port` (not a fixed 8000). Examples: `http://127.0.0.1:8000/docs`, `http://127.0.0.1:8005/docs`. Point the Vite proxy (`VITE_API_PROXY_TARGET`) at that same origin (see Frontend).
 
+#### Deploy backend (Render)
+
+- **ASGI entry:** `main:app` (same as `uvicorn main:app`).
+- **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`, or use **`backend/Procfile`** (`web: …`) if the platform picks it up.
+- **Root directory:** set to **`backend`** when the repo root is `IntegrationOps-AI`.
+- **Build:** `pip install -r requirements.txt`.
+- **CORS:** `allow_origins=["*"]` for hackathon demos (any deployed frontend origin). **`allow_credentials=False`** is required with a wildcard origin (browsers reject `*` with credentialed requests).
+
 ### Frontend
 
 ```bash
@@ -54,11 +64,12 @@ npm install
 npm run dev
 ```
 
-In development, the UI defaults to same-origin **`/api/...`**, which Vite proxies to FastAPI (`vite.config.js` → `VITE_API_PROXY_TARGET`). Avoid setting **`VITE_API_URL`** unless you intentionally want the browser to call the API host directly (then it must match the real uvicorn port and CORS).
+In development, the UI defaults to same-origin **`/api/...`**, which Vite proxies to FastAPI (`vite.config.js` → `VITE_API_PROXY_TARGET`). For a **hosted** API (e.g. Render), set **`VITE_API_URL`** to that base URL (no trailing slash); the backend allows **`Origin: *`** style CORS for hackathon use.
 
 Open [http://localhost:5173](http://localhost:5173):
 
 - **/** — Dashboard: **`GET /health`**, **`GET /incidents`**, **`POST /monitor/run-now`** (structured JSON + hints when the cycle skips, e.g. empty `MONITOR_IFLOW_IDS`).
+- **/alerts/mock-inbox** — Fake email-client preview of CPI incident alerts (uses **`GET /incidents`** when present, else seeded demos; **`To:`** from **`mock_alert_email`** on **`GET /health`** / **`MOCK_ALERT_EMAIL`** in `backend/.env`).
 - **/monitor/lifecycle** — Operator view: each incident joined with **`llm_exchange`** rows and in-memory monitor runs for that MPL MessageGuid; optional **`?message_id=<guid>`** deep link.
 
 ## Main API endpoints
@@ -67,7 +78,7 @@ Same routes are mounted at the root and under **`/api`** (e.g. `/api/health` and
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Liveness |
+| `GET` | `/health` | Liveness; includes **`mock_alert_email`** for the mock inbox **`To:`** line |
 | `POST` | `/agent/investigate` | On-demand full investigation (CPI + LLM) |
 | `GET` | `/monitor/status` | Scheduler config, monitored artifact IDs, runtime fields (e.g. next poll) |
 | `GET` | `/monitor/history` | Recent in-memory monitor run summaries (cleared on process restart) |

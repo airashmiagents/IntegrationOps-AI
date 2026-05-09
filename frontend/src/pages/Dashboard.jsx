@@ -70,6 +70,11 @@ export default function Dashboard() {
         )}
       </p>
 
+      <p style={{ marginTop: "0.65rem", fontSize: "0.9rem" }}>
+        <Link to="/alerts/mock-inbox">Open mock alert inbox</Link> — preview how CPI incident emails would look (no
+        mail server).
+      </p>
+
       <section style={{ marginTop: "1.25rem" }}>
         <h2 style={{ fontSize: "1.1rem" }}>Backend status</h2>
         {err && <p style={{ color: "#b91c1c" }}>Could not reach API: {err}</p>}

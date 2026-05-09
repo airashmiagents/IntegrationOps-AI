@@ -33,6 +33,12 @@ export default function Header() {
           Dashboard
         </NavLink>
         <NavLink
+          to="/alerts/mock-inbox"
+          style={({ isActive }) => ({ ...linkStyle, ...(isActive ? activeStyle : {}) })}
+        >
+          Mock alert inbox
+        </NavLink>
+        <NavLink
           to="/monitor/lifecycle"
           style={({ isActive }) => ({ ...linkStyle, ...(isActive ? activeStyle : {}) })}
         >
