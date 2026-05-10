@@ -1,0 +1,4 @@
+# Local-only pitch deck (generate with scripts/generate_pitch_deck.py)
+presentation/
+
+.DS_Store

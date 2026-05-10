@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 Generate IntegrationOps AI hackathon deck (dark / enterprise theme).
-Run: pip install -r requirements-pptx.txt && python generate_deck.py
-Output: IntegrationOps-AI-Deck.pptx (same folder)
+
+Run from repo root:
+  pip install -r scripts/requirements-pptx.txt && python scripts/generate_pitch_deck.py
+
+Output (gitignored): presentation/IntegrationOps-AI-Deck.pptx
 """
 
 from __future__ import annotations
@@ -24,7 +27,10 @@ ACCENT_A = RGBColor(99, 102, 241)  # indigo-500
 ACCENT_B = RGBColor(56, 189, 248)  # sky-400
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
-OUT = Path(__file__).resolve().parent / "IntegrationOps-AI-Deck.pptx"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_OUT_DIR = _REPO_ROOT / "presentation"
+_OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT = _OUT_DIR / "IntegrationOps-AI-Deck.pptx"
 
 
 def _full_bleed_bg(slide, color: RGBColor = BG) -> None:
