@@ -49,11 +49,10 @@ class Settings(BaseSettings):
     # OpenRouter — unified API; defaults use :free models (see https://openrouter.ai/models).
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "google/gemma-4-31b-it:free"
+    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     # Second model when primary errors or JSON parse fails. Must be a *different* id than
     # openrouter_model (duplicates are skipped — only one attempt). Empty disables fallback.
-    # Meta Llama :free (older meta-llama/llama-3.1-8b-instruct:free is no longer offered on OpenRouter).
-    openrouter_fallback_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_fallback_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
     openrouter_http_referer: str = "https://localhost"
     openrouter_app_title: str = "IntegrationOps-AI"
     # After HTTP 429 from OpenRouter/upstream, retry the same model this many extra times (uses retry_after_seconds when present).

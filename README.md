@@ -141,7 +141,7 @@ Logs include: monitoring cycle started, incidents found (counts / message id), a
 See **`backend/.env.example`** for the full list. Notable variables:
 
 - **CPI:** `SAP_CPI_BASE_URL`, `SAP_CPI_USER`, `SAP_CPI_PASSWORD`, `CPI_USE_MOCK`, `SAP_CPI_API_ROOT`
-- **OpenRouter:** `OPENROUTER_API_KEY` / `LLM_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL` — defaults use two different **`:free`** ids (`google/gemma-4-31b-it:free`, then `meta-llama/llama-3.3-70b-instruct:free`). Use distinct ids: if they match, the app only tries one model. **`OPENROUTER_429_EXTRA_ATTEMPTS`** (default `2`): on HTTP 429, wait for upstream `retry_after_seconds` (capped) and retry the same model before switching to fallback or heuristic.
+- **OpenRouter:** `OPENROUTER_API_KEY` / `LLM_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL` — defaults use two different **`:free`** ids (`meta-llama/llama-3.3-70b-instruct:free`, then `nvidia/nemotron-3-super-120b-a12b:free`). Use distinct ids: if they match, the app only tries one model. **`OPENROUTER_429_EXTRA_ATTEMPTS`** (default `2`): on HTTP 429, wait for upstream `retry_after_seconds` (capped) and retry the same model before switching to fallback or heuristic.
 - **Monitor:** `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_SEC`, **`MONITOR_IFLOW_IDS`** (required for real polling), `SCHEDULER_LOOKBACK_MINUTES`
 - **SQLite:** `LLM_AUDIT_SQLITE_ENABLED`, `INCIDENTS_SQLITE_ENABLED`, optional `*_SQLITE_PATH` overrides
 - **Terminal trace:** `AGENT_TERMINAL_TRACE=true` — step-by-step CPI + LLM narrative to stderr
