@@ -45,12 +45,13 @@ class Settings(BaseSettings):
     incidents_sqlite_enabled: bool = True
     incidents_sqlite_path: str = ""  # empty → backend/incidents.sqlite
 
-    # OpenRouter — unified API for DeepSeek, Llama, etc.
+    # OpenRouter — unified API; defaults use :free models (see https://openrouter.ai/models).
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "deepseek/deepseek-chat"
-    # Used when primary model errors (HTTP non-200) or JSON parse fails. Set empty to disable.
-    openrouter_fallback_model: str = "meta-llama/llama-3.1-8b-instruct:free"
+    openrouter_model: str = "google/gemma-4-31b-it:free"
+    # Second model when primary errors or JSON parse fails. Must be a *different* id than
+    # openrouter_model (duplicates are skipped — only one attempt). Empty disables fallback.
+    openrouter_fallback_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
     openrouter_http_referer: str = "https://localhost"
     openrouter_app_title: str = "IntegrationOps-AI"
 

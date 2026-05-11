@@ -161,7 +161,7 @@ def _flow_architecture(slide) -> None:
 
     caption = (
         "OData MPL + design-time metadata → FastAPI → run_investigation → build_context → "
-        "OpenRouter (DeepSeek / fallback) → structured RCA → SQLite + mock inbox + Jira-ready fields"
+        "OpenRouter (Gemma 4 31B IT free + Qwen3 Next 80B free fallback) → structured RCA → SQLite + mock inbox + Jira-ready fields"
     )
     cap_box = slide.shapes.add_textbox(Inches(0.45), Inches(3.05), Inches(12.2), Inches(1.2))
     tf = cap_box.text_frame
@@ -293,7 +293,7 @@ def build() -> None:
         [
             "FastAPI · Uvicorn · Pydantic — typed APIs, OpenAPI docs, /api prefix for proxies.",
             "React 18 + Vite + React Router — dashboard, lifecycle, mock inbox.",
-            "OpenRouter (DeepSeek + Llama fallback) — httpx, JSON-mode prompts.",
+            "OpenRouter (two distinct :free models — Gemma 4 31B IT + Qwen3 Next 80B fallback) — httpx, JSON-mode prompts.",
             "SAP CPI OData (MPL + Integration Content) — mock + live paths.",
             "Render (API) + Vercel (UI) — env-driven VITE_API_URL, CORS-ready.",
         ],
