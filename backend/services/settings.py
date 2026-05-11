@@ -1,5 +1,6 @@
 """Load settings from environment (.env) for local hackathon development."""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,9 +52,12 @@ class Settings(BaseSettings):
     openrouter_model: str = "google/gemma-4-31b-it:free"
     # Second model when primary errors or JSON parse fails. Must be a *different* id than
     # openrouter_model (duplicates are skipped — only one attempt). Empty disables fallback.
-    openrouter_fallback_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
+    # Meta Llama :free (older meta-llama/llama-3.1-8b-instruct:free is no longer offered on OpenRouter).
+    openrouter_fallback_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     openrouter_http_referer: str = "https://localhost"
     openrouter_app_title: str = "IntegrationOps-AI"
+    # After HTTP 429 from OpenRouter/upstream, retry the same model this many extra times (uses retry_after_seconds when present).
+    openrouter_429_extra_attempts: int = Field(default=2, ge=0, le=10)
 
     # Legacy aliases from older .env (optional).
     llm_api_key: str = ""

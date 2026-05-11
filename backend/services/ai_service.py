@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -88,14 +89,28 @@ class OpenRouterCallResult:
     error_note: str | None
 
 
-def _openrouter_chat_json(
+def _sleep_seconds_after_429(error_note: str | None) -> float:
+    """Parse OpenRouter error JSON for ``retry_after_seconds``; cap wait for worker safety."""
+    if error_note:
+        try:
+            err = json.loads(error_note)
+            meta = (err.get("error") or {}).get("metadata") or {}
+            ra = meta.get("retry_after_seconds")
+            if isinstance(ra, (int, float)) and ra > 0:
+                return min(max(float(ra), 0.5), 90.0)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+    return 3.0
+
+
+def _openrouter_post_once(
     *,
     url: str,
     headers: dict[str, str],
     model: str,
     user_prompt: str,
 ) -> OpenRouterCallResult:
-    """Single chat/completions call; parsed JSON or None with HTTP / parse error notes."""
+    """Single POST to chat/completions (no 429 retry)."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": _chat_messages_for_audit(user_prompt),
@@ -122,6 +137,37 @@ def _openrouter_chat_json(
     except Exception as exc:  # noqa: BLE001
         logger.warning("OpenRouter model=%s failed: %s", model, exc)
         return OpenRouterCallResult(None, raw, status, str(exc)[:8000])
+
+
+def _openrouter_chat_json(
+    *,
+    url: str,
+    headers: dict[str, str],
+    model: str,
+    user_prompt: str,
+) -> OpenRouterCallResult:
+    """chat/completions with JSON response; retries HTTP 429 per ``openrouter_429_extra_attempts``."""
+    extra = max(0, settings.openrouter_429_extra_attempts)
+    max_tries = 1 + extra
+    for attempt in range(max_tries):
+        res = _openrouter_post_once(
+            url=url, headers=headers, model=model, user_prompt=user_prompt
+        )
+        if res.parsed is not None:
+            return res
+        if res.http_status != 429:
+            return res
+        if attempt >= max_tries - 1:
+            return res
+        delay = _sleep_seconds_after_429(res.error_note)
+        logger.info(
+            "OpenRouter model=%s HTTP 429 — sleeping %.1fs (retry %s/%s)",
+            model,
+            delay,
+            attempt + 2,
+            max_tries,
+        )
+        time.sleep(delay)
 
 
 def analyze_with_openrouter(
