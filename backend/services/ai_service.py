@@ -124,7 +124,21 @@ def _openrouter_post_once(
             r = client.post(url, headers=headers, json=payload)
         status = r.status_code
         if r.status_code != 200:
-            logger.warning("OpenRouter model=%s HTTP %s: %s", model, r.status_code, r.text[:800])
+            body_snip = r.text[:800]
+            if r.status_code == 429:
+                # Shared :free routes rate-limit often; ``_openrouter_chat_json`` may retry after Retry-After.
+                logger.info(
+                    "OpenRouter model=%s HTTP 429 (rate limited upstream): %s",
+                    model,
+                    body_snip[:400],
+                )
+            else:
+                logger.warning(
+                    "OpenRouter model=%s HTTP %s: %s",
+                    model,
+                    r.status_code,
+                    body_snip[:800],
+                )
             return OpenRouterCallResult(None, None, status, r.text[:8000])
         body = r.json()
         content = body["choices"][0]["message"]["content"]
